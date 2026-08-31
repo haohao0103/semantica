@@ -141,6 +141,11 @@ class GraphStoreConfig:
             # Apache AGE settings
             "GRAPH_STORE_AGE_CONNECTION_STRING": "age_connection_string",
             "GRAPH_STORE_AGE_GRAPH_NAME": "age_graph_name",
+            # HugeGraph settings
+            "GRAPH_STORE_HUGEGRAPH_HOST": "hugegraph_host",
+            "GRAPH_STORE_HUGEGRAPH_PORT": "hugegraph_port",
+            "GRAPH_STORE_HUGEGRAPH_GRAPH": "hugegraph_graph",
+            "GRAPH_STORE_HUGEGRAPH_TIMEOUT": "hugegraph_timeout",
         }
 
         for env_var, config_key in env_mappings.items():
@@ -153,6 +158,8 @@ class GraphStoreConfig:
                     "max_retries",
                     "falkordb_port",
                     "neptune_port",
+                    "hugegraph_port",
+                    "hugegraph_timeout",
                 ]:
                     try:
                         self._config[config_key] = int(value)
@@ -205,6 +212,11 @@ class GraphStoreConfig:
             # Apache AGE defaults
             "age_connection_string": "host=localhost dbname=agedb user=postgres password=postgres",
             "age_graph_name": "semantica",
+            # HugeGraph defaults
+            "hugegraph_host": "localhost",
+            "hugegraph_port": 8080,
+            "hugegraph_graph": "hugegraph",
+            "hugegraph_timeout": 30,
         }
 
         for key, default_value in defaults.items():
@@ -331,6 +343,20 @@ class GraphStoreConfig:
         return {
             "connection_string": self._config.get("age_connection_string"),
             "graph_name": self._config.get("age_graph_name"),
+        }
+
+    def get_hugegraph_config(self) -> Dict[str, Any]:
+        """
+        Get HugeGraph-specific configuration.
+
+        Returns:
+            HugeGraph configuration dictionary
+        """
+        return {
+            "host": self._config.get("hugegraph_host"),
+            "port": self._config.get("hugegraph_port"),
+            "graph": self._config.get("hugegraph_graph"),
+            "timeout": self._config.get("hugegraph_timeout"),
         }
 
     def reset(self) -> None:

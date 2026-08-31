@@ -140,6 +140,7 @@ from .graph_store import (
     QueryEngine,
     RelationshipManager,
 )
+from .hugegraph_store import HugeGraphStore
 from .methods import (
     create_node,
     create_nodes,
@@ -185,6 +186,8 @@ __all__ = [
     "FalkorDBStore",
     "FalkorDBClient",
     "FalkorDBGraph",
+    # HugeGraph
+    "HugeGraphStore",
     # Convenience functions
     "create_node",
     "create_nodes",
