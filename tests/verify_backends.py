@@ -127,6 +127,19 @@ def main():
     # 3. FalkorDB (Requires Redis)
     results['falkordb'] = verify_backend('falkordb', {})
 
+    # 4. HugeGraph (Requires HugeGraph 1.7 server on :8080)
+    # Vertices use CUSTOMIZE_STRING ids, so the logical id supplied as the
+    # "id" property becomes the vertex id. Pass config explicitly so the
+    # test does not depend on env vars being set.
+    results['hugegraph'] = verify_backend('hugegraph', {
+        'config': {
+            'host': 'localhost',
+            'port': 8080,
+            'graph': 'hugegraph',
+            'timeout': 30,
+        }
+    })
+
     print("\n" + "="*50)
     print("VERIFICATION SUMMARY")
     print("="*50)

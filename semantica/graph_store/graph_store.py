@@ -591,6 +591,13 @@ class GraphStore:
             age_config.update(self.config)
             self._store_backend = ApacheAgeStore(**age_config)
 
+        elif self.backend == "hugegraph":
+            from .hugegraph_store import HugeGraphStore
+
+            hg_config = graph_store_config.get_hugegraph_config()
+            hg_config.update(self.config)
+            self._store_backend = HugeGraphStore(**hg_config)
+
         else:
             raise ValidationError(f"Unknown backend: {self.backend}")
 
@@ -833,6 +840,26 @@ class GraphStore:
             if "text" in node and "text" not in props:
                 props["text"] = node["text"]
 
+            # Carry over the entity's own scalar attributes. Entity dicts
+            # produced by GraphBuilder carry name/type/confidence/metadata at
+            # the *top level* (not under "properties"), so without this they
+            # were silently dropped on write — only "id" survived.
+            for key, value in node.items():
+                if key in ("labels", "properties", "id", "content", "text"):
+                    continue
+                if key not in props and isinstance(
+                    value, (str, int, float, bool)
+                ):
+                    props[key] = value
+
+            # Flatten metadata into top-level properties (graph stores
+            # generally cannot store nested dicts).
+            metadata = node.get("metadata") or {}
+            if isinstance(metadata, dict):
+                for mk, mv in metadata.items():
+                    if isinstance(mv, (str, int, float, bool)) and mk not in props:
+                        props[mk] = mv
+
             graph_nodes.append({"labels": labels, "properties": props})
 
         # Use batch creation
@@ -867,6 +894,7 @@ class GraphStore:
             Number of edges created
         """
         count = 0
+        skipped = 0
         for edge in edges:
             source_id = edge.get("source_id")
             target_id = edge.get("target_id")
@@ -884,9 +912,19 @@ class GraphStore:
                     )
                     count += 1
                 except Exception as e:
+                    skipped += 1
                     self.logger.warning(
                         f"Failed to add edge {source_id}->{target_id}: {e}"
                     )
+        # Report honestly: callers (e.g. GraphBuilder) log the returned count
+        # as "edges added", so silently under-reporting hides dropped edges.
+        # Dangling endpoints are common with LLM-extracted relations.
+        if skipped:
+            self.logger.warning(
+                f"add_edges: {count} created, {skipped} skipped "
+                f"(out of {len(edges)}); skipped edges reference vertices that "
+                f"do not exist"
+            )
         return count
 
     def build_from_conversations(
