@@ -29,6 +29,33 @@ HugeGraph 1.7+ server, using:
 Vertex and edge IDs follow HugeGraph's compound format: vertices are returned as
 ``"<numeric>:<label>"`` (e.g. ``"1:person"``) and edges as ``"<src>><label>><dst>"``.
 
+.. important:: Integration rules (verified against a real HG 1.7.0 instance on
+   2026-08-31 by the hugegraph-ai NL2SQL semantic-layer PoC — follow these to
+   avoid the data-loss / 400 traps below)
+
+   1. **Logical ids must NOT contain ``:``** (``tbl_orders``, NOT ``tbl:orders``).
+      :func:`_split_compound` splits on the last ``:`` to recover the
+      ``<numeric>:<label>`` compound form, so a logical id like ``tbl:orders`` is
+      silently mis-parsed as raw ``tbl`` + label ``orders``. The edge-label body
+      then gets ``source_label="orders"`` instead of the real label and HG
+      answers with a 400. This also corrupts ``_lookup_vertex_label`` results.
+   2. **Give every edge label a unique (source_label, target_label) pair** and
+      never reuse a label across different endpoint label pairs. Reusing one
+      triggers :meth:`HugeGraphStore._recreate_edge_label` (snapshot → async
+      delete → recreate → restore). The delete is asynchronous, has races, and
+      a failed restore silently drops the other edges that shared the label —
+      a real PoC run lost 73 existing edges this way.
+   3. **Do not ``hasLabel(...)`` / ``inE(...)`` on a label that does not exist
+      yet.** HG's Gremlin throws ``Undefined vertex/edge label`` and the whole
+      script is discarded. Always query ``GET /schema/vertexlabels`` (resp.
+      ``/schema/edgelabels``) first and only reference labels that exist —
+      e.g. an ``inE('correction_applies_to')`` on a fresh graph where no such
+      edge label has been created yet kills the query.
+   4. **Same-name vertex labels clash across writers**: a label already created
+      with ``PRIMARY_KEY`` id strategy rejects CUSTOMIZE_STRING writes with
+      ``Can't customize vertex id when id strategy is 'PRIMARY_KEY'``. Prefix
+      your labels (e.g. ``PoCTable``) when sharing a graph with other pipelines.
+
 Author: HugeGraph × Semantica Integration
 License: MIT
 """
@@ -130,6 +157,12 @@ def _split_compound(vertex_id: Any) -> Tuple[Any, str]:
 
     Note the asymmetry with :func:`_rest_id`: REST *edge endpoints* want the
     bare id, REST *vertex GET* wants it JSON-quoted.
+
+    .. warning:: Logical ids must NOT contain ``:``. Anything after the last
+        ``:`` is treated as the label part of a compound id, so ``tbl:orders``
+        parses as raw ``tbl`` + label ``orders`` — the edge body then carries a
+        wrong ``source_label``/``target_label`` and HG returns 400. Use
+        ``tbl_orders`` (verified 2026-08-31).
     """
     s = str(vertex_id)
     if ":" in s:
@@ -502,6 +535,12 @@ class HugeGraphStore:
             # create_relationship using this label fixes the pair, so a later
             # edge between different labels is rejected. Widen the label to
             # the union and recreate when a new pair shows up.
+            #
+            # WARNING (verified 2026-08-31): prefer ONE edge label per
+            # (source_label, target_label) pair. The widen path snapshots,
+            # asynchronously deletes, recreates and restores the label's edges;
+            # the async delete races and a failed restore silently drops every
+            # edge that shared the label (a real PoC run lost 73 edges this way).
             cur_src = {s for s in (el.get("source_label") or "").split(",") if s}
             cur_tgt = {t for t in (el.get("target_label") or "").split(",") if t}
             new_src = {s for s in source_labels if s}
@@ -1036,6 +1075,13 @@ class HugeGraphStore:
         therefore treated as a Gremlin traversal/script. Cypher→Gremlin
         translation is out of scope for this adapter and should be done by the
         caller (e.g. Semantica's Cypher layer) if needed.
+
+        .. warning:: HG's Gremlin throws ``Undefined vertex/edge label`` (and
+            discards the whole script) when a ``hasLabel(...)`` / ``inE(...)``
+            references a label that has not been created yet. If a script may
+            run against a fresh graph, check ``GET /schema/vertexlabels`` /
+            ``/schema/edgelabels`` first and only reference existing labels
+            (verified 2026-08-31).
         """
         return self._gremlin(query)
 

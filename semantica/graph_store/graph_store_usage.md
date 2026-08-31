@@ -548,6 +548,39 @@ print(f"Total relationships: {stats.get('relationship_count')}")
 print(f"Labels: {stats.get('label_counts')}")
 ```
 
+## HugeGraph Backend Notes (HG 1.7, verified 2026-08-31)
+
+Integration rules learned on a real HG 1.7.0 instance (NL2SQL semantic-layer PoC).
+Full details are in `hugegraph_store.py` docstrings; the short version:
+
+1. **Logical ids must NOT contain `:`** — use `tbl_orders`, not `tbl:orders`.
+   `_split_compound` splits on the last `:` to recover HG's `<numeric>:<label>`
+   compound form, so a logical id containing `:` gets mis-parsed and the edge
+   body ends up with a wrong `source_label`/`target_label` → HTTP 400.
+2. **One edge label per (source_label, target_label) pair.** Reusing a label
+   across different endpoint pairs triggers the widen→recreate path (snapshot →
+   async delete → recreate → restore). The async delete races and a failed
+   restore silently drops other edges sharing the label (lost 73 edges in one
+   run). Prefix labels (`PoCTable`) when sharing a graph with other pipelines.
+3. **Never `hasLabel(...)`/`inE(...)` a non-existent label.** HG throws
+   `Undefined vertex/edge label` and discards the whole script. Query
+   `GET /schema/vertexlabels` / `/schema/edgelabels` first, then reference only
+   existing labels.
+4. **Gremlin channel only speaks Gremlin.** Semantica's high-level Cypher APIs
+   (DecisionRecorder / DecisionQuery / ContextRetriever) are not usable against
+   this backend; use `create_node` / `create_relationship` / `execute_query`.
+
+```python
+# HugeGraph backend (REST + Gremlin over one HTTP port)
+from semantica.graph_store import GraphStore
+
+store = GraphStore(backend="hugegraph", host="127.0.0.1", port=8081, graph="kg_rag")
+store.connect()
+# Logical ids with underscores only; one edge label per endpoint-label pair.
+store.create_node(["PoCTable"], {"id": "tbl_orders", "name": "orders"})
+store.create_relationship("tbl_orders", "fld_orders_amount", "pocHasColumn")
+```
+
 ## Backend Comparison
 
 | Feature | Neo4j | FalkorDB |
